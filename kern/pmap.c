@@ -102,8 +102,18 @@ boot_alloc(uint32_t n)
 	// to a multiple of PGSIZE.
 	//
 	// LAB 2: Your code here.
+	if (n == 0) {
+		return nextfree;
+	}
 
-	return NULL;
+	result = nextfree;
+	nextfree += ROUNDUP(n, PGSIZE);
+	if (nextfree > (char *)0xf0400000) {
+		panic("boot_alloc: out of memory\n");
+		nextfree = result;
+		return NULL;
+	}
+	return result;
 }
 
 // Set up a two-level page table:
@@ -125,7 +135,7 @@ mem_init(void)
 	i386_detect_memory();
 
 	// Remove this line when you're ready to test this function.
-	panic("mem_init: This function is not finished\n");
+	// panic("mem_init: This function is not finished\n");
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
@@ -148,7 +158,8 @@ mem_init(void)
 	// array.  'npages' is the number of physical pages in memory.  Use memset
 	// to initialize all fields of each struct PageInfo to 0.
 	// Your code goes here:
-
+	pages = (struct PageInfo *)boot_alloc(npages * sizeof(struct PageInfo));
+	memset(pages, 0, npages * sizeof(struct PageInfo));
 
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
@@ -193,6 +204,9 @@ mem_init(void)
 	// we just set up the mapping anyway.
 	// Permissions: kernel RW, user NONE
 	// Your code goes here:
+	boot_map_region(kern_pgdir, UPAGES, npages * sizeof(struct PageInfo), PADDR(pages), PTE_U);
+	boot_map_region(kern_pgdir, KSTACKTOP - KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W);
+	boot_map_region(kern_pgdir, KERNBASE, 0xffffffff - KERNBASE, 0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -251,8 +265,33 @@ page_init(void)
 	// Change the code to reflect this.
 	// NB: DO NOT actually touch the physical memory corresponding to
 	// free pages!
-	size_t i;
-	for (i = 0; i < npages; i++) {
+	pages[0].pp_ref = 1;
+	pages[0].pp_link = NULL;
+	page_free_list = NULL;
+
+	// pages in low memory
+	size_t i = 1;
+	for (; i < npages_basemem; i++) {
+		pages[i].pp_ref = 0;
+		pages[i].pp_link = page_free_list;
+		page_free_list = &pages[i];
+	}
+
+	// pages in the IO hole
+	i = IOPHYSMEM >> PGSHIFT;
+	for (; i < (EXTPHYSMEM >> PGSHIFT); i++) {
+		pages[i].pp_ref = 1;
+	}
+
+	// pages in use
+	i = EXTPHYSMEM >> PGSHIFT;
+	for (; i < PADDR(boot_alloc(0)) / PGSIZE; i++) {
+		pages[i].pp_ref = 1;
+	}
+
+	// pages in extend memory
+	i = PADDR(boot_alloc(0)) / PGSIZE;
+	for (; i < npages; i++) {
 		pages[i].pp_ref = 0;
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
@@ -275,7 +314,21 @@ struct PageInfo *
 page_alloc(int alloc_flags)
 {
 	// Fill this function in
-	return 0;
+	if (page_free_list == NULL) {
+		return NULL;
+	}
+
+	// Get free page
+	struct PageInfo *target = page_free_list;
+	page_free_list = page_free_list->pp_link;
+	target->pp_link = NULL;
+
+	// Set 0 if ALLOC_ZERO
+	char *va = page2kva(target);
+	if (alloc_flags & ALLOC_ZERO) {
+		memset(va, 0, PGSIZE);
+	}
+	return target;
 }
 
 //
@@ -288,6 +341,11 @@ page_free(struct PageInfo *pp)
 	// Fill this function in
 	// Hint: You may want to panic if pp->pp_ref is nonzero or
 	// pp->pp_link is not NULL.
+	if (pp->pp_ref != 0 || pp->pp_link != NULL) {
+		panic("Page double free or freeing a referenced page\n");
+	}
+	pp->pp_link = page_free_list;
+	page_free_list = pp;
 }
 
 //
@@ -323,11 +381,36 @@ page_decref(struct PageInfo* pp)
 // Hint 3: look at inc/mmu.h for useful macros that manipulate page
 // table and page directory entries.
 //
+
+// Suspicious implementation
 pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// Fill this function in
-	return NULL;
+	
+	// 从页目录表获取页目录项地址
+	pde_t *pde = &pgdir[PDX(va)];
+	pte_t *pte;
+
+	// 若页目录项存在位为1，直接获取页表地址
+	// 若页目录项存在位为0，创建新的页表
+	if (*pde & PTE_P) {
+		pte = KADDR(PTE_ADDR(*pde));
+	} else {
+		if (!create) return NULL;
+		struct PageInfo *pp = page_alloc(ALLOC_ZERO);
+		if (pp == NULL) return NULL;
+		pp->pp_ref++;
+	
+		// 将新分配的表页的物理地址转换为虚拟地址
+		pte = (pte_t *)page2kva(pp);
+
+		// 将页目录表中对应的页目录项存在置1
+		*pde = PADDR(pte) | PTE_P | PTE_W | PTE_U;
+	}
+
+	// 返回虚拟地址对应的页表项地址
+	return &pte[PTX(va)];
 }
 
 //
@@ -345,6 +428,17 @@ static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
 	// Fill this function in
+	pte_t *pte;
+	uintptr_t last = ROUNDDOWN(va + size - 1, PGSIZE);
+	va = ROUNDDOWN(va, PGSIZE);
+	pa = ROUNDDOWN(pa, PGSIZE);
+	while (1) {
+		if ((pte = pgdir_walk(pgdir, (void *)va, true)) == NULL) return;
+		*pte = pa | perm | PTE_P;
+		if (va == last) return;
+		va += PGSIZE;
+		pa += PGSIZE;
+	}
 }
 
 //
@@ -376,6 +470,16 @@ int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
 	// Fill this function in
+	pte_t *pte = pgdir_walk(pgdir, va, true);
+	if (pte == NULL) return -E_NO_MEM;
+	
+	if (*pte & PTE_P) 
+		if (PTE_ADDR(*pte) != page2pa(pp))
+	        // remove page only when not remapped
+            page_remove(pgdir, va);
+	if (PTE_ADDR(*pte) != page2pa(pp))
+	    pp->pp_ref++;
+	*pte = page2pa(pp) | perm | PTE_P;
 	return 0;
 }
 
@@ -394,7 +498,10 @@ struct PageInfo *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 {
 	// Fill this function in
-	return NULL;
+	pte_t * pte;
+	if ((pte = pgdir_walk(pgdir, va, false)) == NULL) return NULL;
+	if (pte_store) *pte_store = pte;
+	return pa2page(PTE_ADDR(*pte));
 }
 
 //
@@ -416,6 +523,12 @@ void
 page_remove(pde_t *pgdir, void *va)
 {
 	// Fill this function in
+	pte_t *pte;
+	struct PageInfo* page = page_lookup(pgdir, va, &pte);
+	if (page == NULL) return;
+	page_decref(page);
+	tlb_invalidate(pgdir, va);
+	*pte = 0;
 }
 
 //
