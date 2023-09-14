@@ -177,12 +177,28 @@ mem_init(void)
 	// Now we set up virtual memory
 
 	//////////////////////////////////////////////////////////////////////
+	// 在mem_init中需要初始化三段地址空间，第一段是[UPAGES, UPAGES+PTSIZE)。
+	// 由于pages数组本身所占的物理地址在初始化内存空间时是没有登记到page_free_list中的，
+	// 它所占的空间永远都不会被释放或者被再次分配，我们建立这个映射的目的也不是为了将
+	// 物理地址空间分配出来做任何用途。因此，我们使用boot_map_region生成映射关系，
+	// 该函数不会改变被映射空间的使用情况。不过，在此我花了很长时间理解下面的几行注释：
 	// Map 'pages' read-only by the user at linear address UPAGES
 	// Permissions:
 	//    - the new image at UPAGES -- kernel R, user R
 	//      (ie. perm = PTE_U | PTE_P)
 	//    - pages itself -- kernel RW, user NONE
+	// 这里的new image at UPAGES是我们将要在UPAGES处建立的映射，它的权限要被设置为
+	// kernel R、user R；而pages itself指的是pages这个数组名，或者说标号，在内核中
+	// 的线性地址，它的权限要被设置为kernel RW, user NONE。要理解这个设定，我们要先
+	// 知道：在一个地址空间中，即使是内核也是不能直接访问用户空间的！实验文档指出，
+	// JOS的内存布局中专门留出了[UTOP, ULIM)这段区间，让内核可以在此区域分享一部分
+	// 数据结构（如pages和lab3的envs）给用户空间；且在这段区间上，内核和用户空间都
+	// 只有读权限。那么内核要怎么修改pages数组呢？答案就是通过标号pages。这个标号
+	// （即线性地址）本身属于内核数据，所以它的值是位于KERNBASE之上的。我们马上就
+	// 要将KERNBASE之上直到4GB的地址区间映射到对应的物理地址上，因此以后内核依然是
+	// 可以修改pages数组的，但不是通过这里UPAGES上的地址。 代码如下：
 	// Your code goes here:
+	boot_map_region(kern_pgdir, UPAGES, npages * sizeof(struct PageInfo), PADDR(pages), PTE_U);
 
 	//////////////////////////////////////////////////////////////////////
 	// Use the physical memory that 'bootstack' refers to as the kernel
@@ -194,7 +210,11 @@ mem_init(void)
 	//       the kernel overflows its stack, it will fault rather than
 	//       overwrite memory.  Known as a "guard page".
 	//     Permissions: kernel RW, user NONE
+	// 第二段是将线性地址区间[KSTACKTOP-KSTKSIZE, KSTACKTOP)映射到由当前正在使用的
+	// 页表确定的[bootstack, bootstacktop）对应的物理地址空间。这一段地址区域同样没有
+	// 登记在page_free_list中，不会分配给被之后的任何任务。
 	// Your code goes here:
+	boot_map_region(kern_pgdir, KSTACKTOP - KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W);
 
 	//////////////////////////////////////////////////////////////////////
 	// Map all of physical memory at KERNBASE.
@@ -204,8 +224,10 @@ mem_init(void)
 	// we just set up the mapping anyway.
 	// Permissions: kernel RW, user NONE
 	// Your code goes here:
-	boot_map_region(kern_pgdir, UPAGES, npages * sizeof(struct PageInfo), PADDR(pages), PTE_U);
-	boot_map_region(kern_pgdir, KSTACKTOP - KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W);
+	// 第三段是位于KERNBASE之上的一大段地址空间[KERNBASE, 2^32)，要求将它映射到物理地址
+	// 区间[0, 2^32-KERNBASE)上，这其中就包括了映射pages标号这个线性地址。虽然虚拟机上
+	// 可能没有这么多内存，但是我们依然可以建立这样的映射。这里同样也只是单纯地建立映射
+	// 关系供内核访问相应的物理地址，不表示分配任何物理页，依然使用boot_map_region。
 	boot_map_region(kern_pgdir, KERNBASE, 0xffffffff - KERNBASE, 0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
