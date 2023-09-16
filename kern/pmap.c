@@ -215,7 +215,7 @@ mem_init(void)
 	//    - envs itself -- kernel RW, user NONE
 	// LAB 3: Your code here.
 	boot_map_region(kern_pgdir, UENVS, NENV * sizeof(struct Env), PADDR(envs), PTE_U);
-	
+
 	//////////////////////////////////////////////////////////////////////
 	// Use the physical memory that 'bootstack' refers to as the kernel
 	// stack.  The kernel stack grows down from virtual address KSTACKTOP.
@@ -605,7 +605,19 @@ int
 user_mem_check(struct Env *env, const void *va, size_t len, int perm)
 {
 	// LAB 3: Your code here.
-
+	uintptr_t start = ROUNDDOWN((uint32_t)va, PGSIZE);
+    uintptr_t end = ROUNDDOWN((uint32_t)va + len - 1, PGSIZE);
+    pte_t* pte;
+    perm |= PTE_P;
+    for (uintptr_t cur = start;; cur += PGSIZE) {
+        pte = pgdir_walk(env->env_pgdir, (void*)cur, 0);
+        if (pte == NULL || (*pte & perm) != perm || cur >= ULIM) {
+            user_mem_check_addr = cur == start ? (uintptr_t)va : cur;
+            return -E_FAULT;
+        }
+        if (cur == end)
+            return 0;
+    }
 	return 0;
 }
 
