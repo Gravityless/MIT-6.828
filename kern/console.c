@@ -194,6 +194,7 @@ cga_putc(int c)
 	}
 
 	// What is the purpose of this?
+	// A: To put chars in the next row.
 	if (crt_pos >= CRT_SIZE) {
 		int i;
 
