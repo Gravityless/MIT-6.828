@@ -298,7 +298,11 @@ mem_init_mp(void)
 	//     Permissions: kernel RW, user NONE
 	//
 	// LAB 4: Your code here:
-
+	uintptr_t kstack_i = KSTACKTOP - KSTKSIZE;
+	for (int i = 0; i < NCPU; i++) {
+		boot_map_region(kern_pgdir, kstack_i, KSTKSIZE, PADDR(percpu_kstacks[i]), PTE_W);
+		kstack_i -= KSTKSIZE + KSTKGAP;
+	}
 }
 
 // --------------------------------------------------------------
@@ -344,6 +348,11 @@ page_init(void)
 	// pages in low memory
 	size_t i = 1;
 	for (; i < npages_basemem; i++) {
+		// lab4 modification
+		if (i == MPENTRY_PADDR >> PGSHIFT) {
+			pages[i].pp_ref = 1;
+			continue;
+		}
 		pages[i].pp_ref = 0;
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
@@ -647,7 +656,13 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// Hint: The staff solution uses boot_map_region.
 	//
 	// Your code here:
-	panic("mmio_map_region not implemented");
+	// panic("mmio_map_region not implemented");
+	if  (base + size >= MMIOLIM)
+		panic("mmio_map_region: out of memory\n");
+	boot_map_region(kern_pgdir, base, size, pa, PTE_PCD | PTE_PCD | PTE_W);
+	uintptr_t result = base;
+	base += ROUNDUP(size, PGSIZE);
+	return (void *)result;
 }
 
 static uintptr_t user_mem_check_addr;
