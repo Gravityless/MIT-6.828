@@ -91,6 +91,12 @@ trap_init(void)
     void vector18();
     void vector19();
     void vector48();
+	void vector32();
+    void vector33();
+    void vector36();
+    void vector39();
+    void vector46();
+    void vector51();
 
     SETGATE(idt[T_DIVIDE], 0, GD_KT, vector0, 0)
     SETGATE(idt[T_DEBUG], 0, GD_KT, vector1, 0)
@@ -113,6 +119,12 @@ trap_init(void)
     SETGATE(idt[T_SIMDERR], 0, GD_KT, vector19, 0)
     // dpl为3，则可以在用户态进行该中断
     SETGATE(idt[T_SYSCALL], 0, GD_KT, vector48, 3)
+	SETGATE(idt[IRQ_OFFSET + IRQ_TIMER], 0, GD_KT, vector32, 3)
+    SETGATE(idt[IRQ_OFFSET + IRQ_KBD], 0, GD_KT, vector33, 3)
+    SETGATE(idt[IRQ_OFFSET + IRQ_SERIAL], 0, GD_KT, vector36, 3)
+    SETGATE(idt[IRQ_OFFSET + IRQ_SPURIOUS], 0, GD_KT, vector39, 3)
+    SETGATE(idt[IRQ_OFFSET + IRQ_IDE], 0, GD_KT, vector46, 3)
+    SETGATE(idt[IRQ_OFFSET + IRQ_ERROR], 0, GD_KT, vector51, 3)
 
 	// Per-CPU setup 
 	trap_init_percpu();
@@ -249,6 +261,11 @@ trap_dispatch(struct Trapframe *tf)
 	// Handle clock interrupts. Don't forget to acknowledge the
 	// interrupt using lapic_eoi() before calling the scheduler!
 	// LAB 4: Your code here.
+	if (tf->tf_trapno == IRQ_OFFSET + IRQ_TIMER) {
+		lapic_eoi();
+		sched_yield();
+		return;
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);
@@ -368,6 +385,23 @@ page_fault_handler(struct Trapframe *tf)
 	//   (the 'tf' variable points at 'curenv->env_tf').
 
 	// LAB 4: Your code here.
+	if (curenv->env_pgfault_upcall != 0) {
+		struct UTrapframe *utf;
+		if (tf->tf_esp >= UXSTACKTOP - PGSIZE && tf->tf_esp < UXSTACKTOP) 
+			utf = (struct UTrapframe *)(tf->tf_esp - 4 - sizeof(struct UTrapframe));
+		else
+			utf = (struct UTrapframe *)(UXSTACKTOP - sizeof(struct UTrapframe));
+		user_mem_assert(curenv, (void *)utf, sizeof(struct UTrapframe), PTE_W);
+		utf->utf_eflags = tf->tf_eflags;
+        utf->utf_eip = tf->tf_eip;
+        utf->utf_err = tf->tf_err;
+        utf->utf_esp = tf->tf_esp;
+        utf->utf_fault_va = fault_va;
+        utf->utf_regs = tf->tf_regs;
+        tf->tf_eip = (uintptr_t)curenv->env_pgfault_upcall;
+        tf->tf_esp = (uintptr_t)utf;
+		env_run(curenv);
+	}
 
 	// Destroy the environment that caused the fault.
 	cprintf("[%08x] user fault va %08x ip %08x\n",

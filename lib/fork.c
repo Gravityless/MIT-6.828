@@ -25,7 +25,8 @@ pgfault(struct UTrapframe *utf)
 	//   (see <inc/memlayout.h>).
 
 	// LAB 4: Your code here.
-
+	if ((err & FEC_WR) == 0 || (uvpt[PGNUM(addr)] & PTE_COW) == 0)
+        panic("pgfault: check faluting access failed");
 	// Allocate a new page, map it at a temporary location (PFTEMP),
 	// copy the data from the old page to the new page, then move the new
 	// page to the old page's address.
@@ -33,8 +34,16 @@ pgfault(struct UTrapframe *utf)
 	//   You should make three system calls.
 
 	// LAB 4: Your code here.
+	if ((r = sys_page_alloc(0, PFTEMP, PTE_P | PTE_U | PTE_W)) < 0)
+        panic("sys_page_alloc: %e", r);
+    addr = ROUNDDOWN(addr, PGSIZE);
+    memcpy(PFTEMP, addr, PGSIZE);
+    if ((r = sys_page_map(0, PFTEMP, 0, addr, PTE_P | PTE_U | PTE_W)) < 0)
+        panic("sys_page_map: %e", r);
+    if ((r = sys_page_unmap(0, PFTEMP)) < 0)
+        panic("sys_page_unmap: %e", r);
 
-	panic("pgfault not implemented");
+	// panic("pgfault not implemented");
 }
 
 //
@@ -54,8 +63,20 @@ duppage(envid_t envid, unsigned pn)
 	int r;
 
 	// LAB 4: Your code here.
-	panic("duppage not implemented");
-	return 0;
+	// panic("duppage not implemented");
+    void* va = (void*)(pn << PGSHIFT);
+    int perm = uvpt[pn] & 0xFFF;
+    if ((perm & PTE_W) || (perm & PTE_COW)) {
+        perm |= PTE_COW; // 增加 PTE_COW
+        perm &= ~PTE_W;  // 减去 PTE_W
+    }
+    perm &= PTE_SYSCALL;
+    if ((r = sys_page_map(0, va, envid, va, perm)) < 0)
+        panic("sys_page_map: %e", r);
+    // 不知为何，这个放前面会出现乱码
+    if ((r = sys_page_map(0, va, 0, va, perm)) < 0)
+        panic("sys_page_map: %e", r);
+    return r;
 }
 
 //
@@ -78,7 +99,30 @@ envid_t
 fork(void)
 {
 	// LAB 4: Your code here.
-	panic("fork not implemented");
+	// panic("fork not implemented");
+	set_pgfault_handler(pgfault);
+    envid_t envid = sys_exofork();
+    if (envid < 0)
+        panic("sys_exofork: %e", envid);
+    if (envid == 0) {
+        // 在子进程
+        thisenv = &envs[ENVX(sys_getenvid())];
+        return 0;
+    }
+    // 在父进程
+    for (uintptr_t addr = UTEXT; addr < USTACKTOP; addr += PGSIZE)
+        if (uvpd[PDX(addr)] & PTE_P && uvpt[PGNUM(addr)] & PTE_P)
+            duppage(envid, PGNUM(addr));
+    int r;
+    // 给子进程分配 exception stack page
+    if ((r = sys_page_alloc(envid, (void*)(UXSTACKTOP - PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
+        panic("sys_page_alloc: %e", r);
+    extern void _pgfault_upcall(void);
+    if ((r = sys_env_set_pgfault_upcall(envid, _pgfault_upcall)) < 0)
+        panic("sys_env_set_pgfault_upcall: %e", r);
+    if ((r = sys_env_set_status(envid, ENV_RUNNABLE)) < 0)
+        panic("sys_env_set_status: %e", r);
+    return envid;
 }
 
 // Challenge!
