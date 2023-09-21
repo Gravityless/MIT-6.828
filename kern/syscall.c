@@ -349,6 +349,18 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 // return 0 on success.
 // Return < 0 on error.  Errors are:
 //	-E_INVAL if dstva < UTOP but dstva is not page-aligned.
+// 该函数只在错误时才会返回，但是作为一个系统调用，当它成功运行完时，
+// 最终返回给用户进程的值会是0。这听起来很矛盾，但是两个返回并不是一回事。
+// 前者是通过return语句，后者则是通过修改用户进程的eax寄存器。原因在于，
+// sys_ipc_recv在设置自己的接收状态为真、进程运行状态为ENV_NOT_RUNNABLE后，
+// 就会让出处理器并使进程转为阻塞状态，直到成功接收到另外一个进程传送过来的信息时
+// 进程才会重新运行。最为关键的地方在于，sys_ipc_recv本身是一个运行在内核态的例程，
+// 所以它通过sys_yield（注意它只是一个内核函数而不是什么系统调用）（或sched_yield）
+// 让出处理器后，并不会像一个用户进程通过系统调用sys_yield让出处理器那样，
+// 最终会回到让出处理器的代码位置继续执行。事实上，内核函数sys_ipc_recv让出处理器后，
+// 进程再次执行时会直接回到用户函数ipc_recv通过系统调用sys_ipc_recv发出中断的地方继续执行。
+// 因此，内核中的sys_ipc_recv在sys_yield之后的任何语句都不会被执行，
+// 但它可以通过修改eax的值使ipc_recv收到一个返回值。
 static int
 sys_ipc_recv(void *dstva)
 {
@@ -360,6 +372,8 @@ sys_ipc_recv(void *dstva)
     curenv->env_ipc_recving = 1;
     curenv->env_ipc_dstva = dstva;
     curenv->env_status = ENV_NOT_RUNNABLE;
+	curenv->env_tf.tf_regs.reg_eax = 0;
+	sys_yield();
     return 0;
 }
 

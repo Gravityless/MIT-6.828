@@ -34,13 +34,20 @@ pgfault(struct UTrapframe *utf)
 	//   You should make three system calls.
 
 	// LAB 4: Your code here.
-	if ((r = sys_page_alloc(0, PFTEMP, PTE_P | PTE_U | PTE_W)) < 0)
+    // 在获取当前进程的id时千万不要使用thisenv，而应该用sys_getenvid()系统调用。
+    // 若使用thisenv，则当子进程开始运行时，其栈页面处于COW状态；
+    // 进入子进程之后的第一件事儿就是读取将寄存器eax的值作为int中断指令的“返回值”，
+    // 然后从接口函数sys_exofork返回，而return操作势必会用到进程栈！
+    // 所以，处理器马上就会进入页错误处理程序，而此时thisenv还没有来得及修正！
+    envid_t envid = sys_getenvid();    // do not use thisenv!
+    if ((r = sys_page_alloc(envid, PFTEMP, PTE_P|PTE_U|PTE_W)) < 0)
         panic("sys_page_alloc: %e", r);
-    addr = ROUNDDOWN(addr, PGSIZE);
-    memcpy(PFTEMP, addr, PGSIZE);
-    if ((r = sys_page_map(0, PFTEMP, 0, addr, PTE_P | PTE_U | PTE_W)) < 0)
+    
+    memmove(PFTEMP,ROUNDDOWN(addr, PGSIZE), PGSIZE);
+    
+    if ((r = sys_page_map(envid, PFTEMP, envid, ROUNDDOWN(addr, PGSIZE), PTE_P|PTE_U|PTE_W)) < 0)
         panic("sys_page_map: %e", r);
-    if ((r = sys_page_unmap(0, PFTEMP)) < 0)
+    if ((r = sys_page_unmap(envid, PFTEMP)) < 0)
         panic("sys_page_unmap: %e", r);
 
 	// panic("pgfault not implemented");
@@ -71,10 +78,24 @@ duppage(envid_t envid, unsigned pn)
         perm &= ~PTE_W;  // 减去 PTE_W
     }
     perm &= PTE_SYSCALL;
-    if ((r = sys_page_map(0, va, envid, va, perm)) < 0)
+
+    // 为什么要先映射子进程的页面为PTE_COW，然后再映射父进程的页面，顺序是否可以交换？
+    // 答案是不能，关键在于栈所在的页。若先映射父进程的栈页面为PTE_COW，
+    // 那么在执行第二个sys_page_map时，由于函数调用必定会对进程的栈产生写操作；
+    // 而父进程的栈此时已经被标记为PTE_COW，所以会导致页错误；
+    // 进程的页错误处理程序会重新申请一个物理页，并让原先的栈所在的虚拟页指向这个物理页，
+    // 且父进程对这个物理页是有写权限的；随后，问题出现了：
+    // 当回到引起页错误的第二个sys_page_map继续执行时，
+    // 为子进程建立的映射页会使它的栈指向该刚刚申请的物理页且权限为PTE_COW，
+    // 与此同时父进程却可以写入该页面，这就与写时复制的规则相违背了！
+    if ((r = sys_page_map(thisenv->env_id, va, envid, va, perm)) < 0)
         panic("sys_page_map: %e", r);
-    // 不知为何，这个放前面会出现乱码
-    if ((r = sys_page_map(0, va, 0, va, perm)) < 0)
+
+    // 为什么即使父进程的页面已经为PTE_COW的情况下也还要再对其做一次映射？
+    // 原理和前面类似，依然是考虑栈页面。若父进程的栈页面是PTE_COW的，
+    // 在对子进程建立映射时会发生和前面相同的情况，之后必须把已经被改为
+    // 父进程可写的新的栈页面再次映射为PTE_COW。
+    if ((r = sys_page_map(thisenv->env_id, va, thisenv->env_id, va, perm)) < 0)
         panic("sys_page_map: %e", r);
     return r;
 }
