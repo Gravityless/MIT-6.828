@@ -51,6 +51,7 @@ SECTIONS
 		PROVIDE(edata = .);
 		*(.dynbss)
 		*(.bss .bss.*)
+		*(.bss)
 		*(COMMON)
 		PROVIDE(end = .);
 	}

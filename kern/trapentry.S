@@ -47,10 +47,45 @@
 /*
  * Lab 3: Your code here for generating entry points for the different traps.
  */
-
+TRAPHANDLER_NOEC(vector0, T_DIVIDE)
+TRAPHANDLER_NOEC(vector1, T_DEBUG)
+TRAPHANDLER_NOEC(vector2, T_NMI)
+TRAPHANDLER_NOEC(vector3, T_BRKPT)
+TRAPHANDLER_NOEC(vector4, T_OFLOW)
+TRAPHANDLER_NOEC(vector5, T_BOUND)
+TRAPHANDLER_NOEC(vector6, T_ILLOP)
+TRAPHANDLER_NOEC(vector7, T_DEVICE)
+TRAPHANDLER(vector8, T_DBLFLT)
+TRAPHANDLER(vector10, T_TSS)
+TRAPHANDLER(vector11, T_SEGNP)
+TRAPHANDLER(vector12, T_STACK)
+TRAPHANDLER(vector13, T_GPFLT)
+TRAPHANDLER(vector14, T_PGFLT)
+TRAPHANDLER_NOEC(vector16, T_FPERR)
+TRAPHANDLER(vector17, T_ALIGN)
+TRAPHANDLER_NOEC(vector18, T_MCHK)
+TRAPHANDLER_NOEC(vector19, T_SIMDERR)
+TRAPHANDLER_NOEC(vector48, T_SYSCALL)
+TRAPHANDLER_NOEC(vector32, IRQ_OFFSET + IRQ_TIMER)
+TRAPHANDLER_NOEC(vector33, IRQ_OFFSET + IRQ_KBD)
+TRAPHANDLER_NOEC(vector36, IRQ_OFFSET + IRQ_SERIAL)
+TRAPHANDLER_NOEC(vector39, IRQ_OFFSET + IRQ_SPURIOUS)
+TRAPHANDLER_NOEC(vector46, IRQ_OFFSET + IRQ_IDE)
+TRAPHANDLER_NOEC(vector51, IRQ_OFFSET + IRQ_ERROR)
 
 
 /*
  * Lab 3: Your code here for _alltraps
  */
+.global _alltraps
+_alltraps:
+    pushl %ds 
+    pushl %es
+    pushal
 
+    movw $GD_KD, %ax
+    movw %ax, %ds
+    movw %ax, %es
+
+    pushl %esp
+    call trap
