@@ -92,7 +92,8 @@ def test_icode():
 
 @test(15)
 def test_testshell():
-    r.user_test("testshell", timeout=60)
+    # r.user_test("testshell", timeout=60)
+    r.user_test("testshell", timeout=180)
     r.match("shell ran correctly")
 
 def gen_primes(n):

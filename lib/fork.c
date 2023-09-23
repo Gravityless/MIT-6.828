@@ -72,6 +72,14 @@ duppage(envid_t envid, unsigned pn)
 	// LAB 4: Your code here.
 	// panic("duppage not implemented");
     void* va = (void*)(pn << PGSHIFT);
+    
+    // LAB 5: Sharing library state across fork and spawn
+    if (uvpt[pn] & PTE_SHARE) {
+        if ((r = sys_page_map(thisenv->env_id, va, envid, va, uvpt[pn] & PTE_SYSCALL)) < 0)
+            panic("sys_page_map: %e", r);
+        return r;
+    }
+    
     int perm = uvpt[pn] & 0xFFF;
     if ((perm & PTE_W) || (perm & PTE_COW)) {
         perm |= PTE_COW; // 增加 PTE_COW
