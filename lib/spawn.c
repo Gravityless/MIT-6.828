@@ -306,7 +306,7 @@ copy_shared_pages(envid_t child)
     for (uintptr_t addr = UTEXT; addr < USTACKTOP; addr += PGSIZE) {
         if ((uvpd[addr/PTSIZE] & (PTE_U|PTE_P)) == (PTE_U|PTE_P) && // need not check uvpd for PTE_SHARE
                 (uvpt[addr/PGSIZE] & (PTE_U|PTE_P|PTE_SHARE)) == (PTE_U|PTE_P|PTE_SHARE)) {
-            if ((r = sys_page_map(thisenv->env_id, (void *)addr, child, (void*)addr, PTE_SYSCALL)) < 0)
+            if ((r = sys_page_map(thisenv->env_id, (void *)addr, child, (void*)addr, uvpt[addr/PGSIZE] & PTE_SYSCALL)) < 0)
                 panic("sys_page_map: %e", r);
         }   
     }
