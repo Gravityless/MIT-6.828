@@ -408,8 +408,22 @@ static int
 sys_time_msec(void)
 {
 	// LAB 6: Your code here.
-	panic("sys_time_msec not implemented");
+	return time_msec();
 }
+
+int
+sys_pkt_send(void *data, size_t len)
+{
+	return e1000_transmit(data, len);
+}
+
+
+static int
+sys_pkt_recv(void *addr, size_t *len)
+{
+	return e1000_receive(addr, len);
+}
+
 
 // Dispatches to the correct kernel function, passing the arguments.
 int32_t
@@ -452,6 +466,13 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
     	return sys_ipc_try_send(a1, a2, (void *)a3, a4);
 	case SYS_env_set_trapframe:
 		return sys_env_set_trapframe(a1, (struct Trapframe *)a2);
+	case SYS_time_msec:
+		return sys_time_msec();
+    case SYS_pkt_send:
+		return sys_pkt_send((void *)a1, (size_t)a2);
+    case SYS_pkt_recv:
+		return sys_pkt_recv((void *)a1, (size_t *)a2);
+
 	default:
 		panic("syscall not handle yet\n");
 		return -E_INVAL;
