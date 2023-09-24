@@ -141,6 +141,8 @@
 // Physical address of startup code for non-boot CPUs (APs)
 #define MPENTRY_PADDR	0x7000
 
+#define JOS_USER 1
+
 #ifndef __ASSEMBLER__
 
 typedef uint32_t pte_t;
